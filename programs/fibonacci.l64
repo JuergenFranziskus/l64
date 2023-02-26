@@ -1,0 +1,10 @@
+memory_start equ 0x10000
+
+start:
+    mov r1, 0
+    mov r2, 1
+loop:
+    add r3, r1, r2
+    store r3, word [memory_start]
+    mov r1, r2, r2, r3
+    jmp loop
