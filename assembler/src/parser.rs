@@ -1,10 +1,12 @@
+use crate::{
+    ast::{
+        Arg, ArgKind, Expr, ExprKind, Line, LineKind, MemoryArg, MemorySize, OpKind, Operation,
+        Program, Register, BinaryOp,
+    },
+    lexer::{Token, TokenKind},
+    span::Span,
+};
 use num::{BigInt, Num};
-
-use crate::{lexer::{Token, TokenKind}, ast::{Program, Line, ExprKind, LineKind, Expr, OpKind, Arg, Operation, ArgKind, Register, MemorySize, MemoryArg}, span::Span};
-
-
-
-
 
 pub struct Parser<'a, 'b> {
     tokens: &'b [Token<'a>],
@@ -12,26 +14,20 @@ pub struct Parser<'a, 'b> {
 }
 impl<'a, 'b> Parser<'a, 'b> {
     pub fn new(tokens: &'b [Token<'a>]) -> Self {
-        Self {
-            tokens,
-            index: 0,
-        }
+        Self { tokens, index: 0 }
     }
 
     pub fn parse(mut self) -> Program<'a> {
         let mut lines = Vec::new();
-        
+
         while !self.at_end() {
             if let Some(line) = self.parse_line() {
                 lines.push(line);
             }
         }
 
-        Program {
-            lines,
-        }
+        Program { lines }
     }
-
 
     fn parse_line(&mut self) -> Option<Line<'a>> {
         if self.is_newline() {
@@ -47,9 +43,10 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         let kind = if self.is_newline() || self.at_end() {
             None
-        }
-        else if self.is_equ() {
+        } else if self.is_equ() {
             Some(self.parse_equ())
+        } else if self.is_token(TokenKind::DefineBytes) {
+            Some(self.parse_db())
         }
         else {
             Some(self.parse_operation())
@@ -60,18 +57,29 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
 
         let span = Span::merge(start, kind.as_ref().map(LineKind::span).unwrap_or(start));
-        Some(Line {
-            span,
-            label,
-            kind,
-        })
+        Some(Line { span, label, kind })
     }
-
 
     fn parse_equ(&mut self) -> LineKind<'a> {
         self.consume_token(TokenKind::Equ);
         let value = self.parse_expr();
         LineKind::Equ(value)
+    }
+    fn parse_db(&mut self) -> LineKind<'a> {
+        self.consume_token(TokenKind::DefineBytes);
+        let mut args = Vec::new();
+
+        while !self.is_newline() && !self.at_end() {
+            args.push(self.parse_expr());
+            if self.is_comma() {
+                self.next();
+            }
+            else {
+                break;
+            }
+        }
+
+        LineKind::DefineBytes(args)
     }
 
     fn parse_operation(&mut self) -> LineKind<'a> {
@@ -85,8 +93,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
             if self.is_comma() {
                 self.next();
-            }
-            else {
+            } else {
                 break;
             }
         }
@@ -97,22 +104,22 @@ impl<'a, 'b> Parser<'a, 'b> {
         LineKind::Op(Operation {
             span,
             op: kind,
-            args
+            args,
         })
     }
 
     fn parse_arg(&mut self) -> Arg<'a> {
         if let TokenKind::Register(_) = self.curr().kind {
             self.parse_reg_arg()
-        }
-        else if self.is_memory_arg() {
+        } else if self.is_token(TokenKind::Flags) {
+            self.parse_flags_arg()
+        } else if self.is_memory_arg() {
             self.parse_memory_arg()
-        }
-        else {
+        } else {
             let e = self.parse_expr();
             Arg {
                 span: e.span,
-                kind: ArgKind::Expression(e)
+                kind: ArgKind::Expression(e),
             }
         }
     }
@@ -121,36 +128,36 @@ impl<'a, 'b> Parser<'a, 'b> {
         let TokenKind::Register(name) = self.curr().kind else { panic!() };
         self.next();
 
-        let num = match name {
-            "r0" => 0,
-            "r1" => 1,
-            "r2" => 2,
-            "r3" => 3,
-            "r4" => 4,
-            "r5" => 5,
-            "r6" => 6,
-            "r7" => 7,
-            "r8" => 8,
-            "r9" => 9,
-            "r10" => 10,
-            "r11" => 11,
-            "r12" => 12,
-            "r13" => 13,
-            "r14" => 14,
-            "r15" | "rip" => 15,
-            _ => panic!(),
-        };
+        let reg = reg_from_name(name);
 
         Arg {
             span,
-            kind: ArgKind::Register(Register(num))
+            kind: ArgKind::Register(reg),
+        }
+    }
+    fn parse_flags_arg(&mut self) -> Arg<'a> {
+        let span = self.curr_span();
+        let TokenKind::Flags = self.curr().kind else { panic!() };
+        self.next();
+        Arg {
+            span,
+            kind: ArgKind::Flags,
         }
     }
     fn parse_memory_arg(&mut self) -> Arg<'a> {
         let start = self.curr_span();
         let size = self.parse_optional_memory_size();
         self.consume_token(TokenKind::OpenBracket);
-        let offset = self.parse_expr();
+        let base = self.parse_optional_base_register();
+        let mut offset = None;
+
+        if !self.is_token(TokenKind::CloseBracket) {
+            if base.is_some() {
+                self.consume_token(TokenKind::Plus);
+            }
+            offset = Some(self.parse_expr());
+        }
+
         let end = self.curr_span();
         self.consume_token(TokenKind::CloseBracket);
 
@@ -158,11 +165,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             span: Span::merge(start, end),
             kind: ArgKind::Memory(MemoryArg {
                 size,
-                base: None,
+                base,
                 index: None,
                 scale: None,
-                offset: Some(offset),
-            })
+                offset: offset,
+            }),
         }
     }
     fn parse_optional_memory_size(&mut self) -> Option<MemorySize> {
@@ -176,29 +183,68 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.next();
         Some(kind)
     }
+    fn parse_optional_base_register(&mut self) -> Option<Register> {
+        if let TokenKind::Register(r) = self.curr().kind {
+            let reg = reg_from_name(r);
+            self.next();
+            Some(reg)
+        }
+        else {
+            None
+        }
+    }
 
     fn parse_op_kind(&mut self) -> OpKind {
         let kind = match self.curr().kind {
+            TokenKind::Nop => OpKind::Nop,
             TokenKind::Add => OpKind::Add,
             TokenKind::Mov => OpKind::Mov,
+            TokenKind::Lea => OpKind::Lea,
             TokenKind::Load => OpKind::Load,
             TokenKind::Store => OpKind::Store,
             TokenKind::Jump => OpKind::Jump,
+            TokenKind::JumpIf => OpKind::JumpIf,
+            TokenKind::CompareNotBelow => OpKind::CompareNotBelow,
+            TokenKind::Call => OpKind::Call,
             _ => panic!(),
         };
         self.next();
         kind
     }
 
-
     fn parse_expr(&mut self) -> Expr<'a> {
         match self.curr().kind {
             TokenKind::Identifier(_) => self.parse_label_expr(),
             TokenKind::Decimal(_) => self.parse_decimal(),
             TokenKind::Hex(_) => self.parse_hex(),
+            TokenKind::StringLiteral(_) => self.parse_string_expr(),
+            TokenKind::Dollar => self.parse_here_expr(),
+            TokenKind::OpenCurly => self.parse_rec_expr(),
             _ => panic!(),
         }
     }
+    fn parse_rec_expr(&mut self) -> Expr<'a> {
+        self.consume_token(TokenKind::OpenCurly);
+        let mut left = self.parse_expr();
+        while !self.at_end() {
+            let op = match self.curr().kind {
+                TokenKind::Plus => BinaryOp::Add,
+                TokenKind::Minus => BinaryOp::Sub,
+                _ => break,
+            };
+            self.next();
+            let right = self.parse_expr();
+            let span = left.span.merge(right.span);
+            left = Expr {
+                span,
+                kind: ExprKind::Binary(left.into(), op, right.into()),
+            }
+        }
+        self.consume_token(TokenKind::CloseCurly);
+
+        left
+    }
+
 
     fn parse_label_expr(&mut self) -> Expr<'a> {
         let span = self.curr_span();
@@ -207,7 +253,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         Expr {
             span,
-            kind: ExprKind::Label(label)
+            kind: ExprKind::Label(label),
         }
     }
     fn parse_decimal(&mut self) -> Expr<'a> {
@@ -218,7 +264,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         Expr {
             span,
-            kind: ExprKind::Integer(value)
+            kind: ExprKind::Integer(value),
         }
     }
     fn parse_hex(&mut self) -> Expr<'a> {
@@ -239,7 +285,29 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         Expr {
             span,
-            kind: ExprKind::Integer(value)
+            kind: ExprKind::Integer(value),
+        }
+    }
+    fn parse_string_expr(&mut self) -> Expr<'a> {
+        let span = self.curr_span();
+        let TokenKind::StringLiteral(literal) = self.curr().kind else { panic!() };
+        let end = literal.len() - 1;
+        let literal = &literal[1..end];
+
+        self.next();
+        Expr {
+            span,
+            kind: ExprKind::String(literal),
+        }
+    }
+    fn parse_here_expr(&mut self) -> Expr<'a> {
+        let span = self.curr_span();
+        let TokenKind::Dollar = self.curr().kind else { panic!() };
+        self.next();
+
+        Expr {
+            span,
+            kind: ExprKind::Here,
         }
     }
 
@@ -264,8 +332,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         if let TokenKind::Identifier(label) = self.curr().kind {
             self.next();
             Some(label)
-        }
-        else {
+        } else {
             None
         }
     }
@@ -276,7 +343,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
     fn consume_token(&mut self, token: TokenKind) {
-        assert!(self.is_token(token));
+        assert!(self.is_token(token), "Expected {token:?}, found {:?}", self.try_curr());
         self.next();
     }
     fn is_token(&self, token: TokenKind) -> bool {
@@ -308,4 +375,30 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn curr_span(&self) -> Span {
         self.curr().span
     }
+
+    
+}
+
+fn reg_from_name(name: &str) -> Register {
+    let num = match name {
+        "r0" => 0,
+        "r1" => 1,
+        "r2" => 2,
+        "r3" => 3,
+        "r4" => 4,
+        "r5" => 5,
+        "r6" => 6,
+        "r7" => 7,
+        "r8" => 8,
+        "r9" => 9,
+        "r10" => 10,
+        "r11" => 11,
+        "r12" => 12,
+        "r13" => 13,
+        "r14" => 14,
+        "r15" | "rip" => 15,
+        _ => panic!(),
+    };
+
+    Register(num)
 }

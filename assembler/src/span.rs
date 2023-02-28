@@ -1,6 +1,3 @@
-
-
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Span {
     start: usize,
@@ -15,20 +12,21 @@ impl Span {
             length,
         }
     }
-
     pub fn merge(self: Span, other: Span) -> Span {
         let start = self.start.min(other.start);
         let end = self.end().max(other.end());
         let length = end - start;
 
-        Span {
-            start,
-            length,
-        }
+        Span { start, length }
     }
-
     pub fn end(self) -> usize {
         self.start + self.length
     }
-}
 
+    pub fn dummy() -> Span {
+        Self {
+            start: usize::MAX,
+            length: 0,
+        }
+    }
+}

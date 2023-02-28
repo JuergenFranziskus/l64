@@ -1,16 +1,17 @@
-use logos::{Logos, Lexer};
 use crate::span::Span;
-
+use logos::{Lexer, Logos};
 
 pub fn lex(src: &str) -> Vec<Token> {
     let lexer: Lexer<TokenKind> = Lexer::new(src);
 
-    lexer.spanned()
-        .map(|(t, s)| Token { span: Span::from_logos(s), kind: t })
+    lexer
+        .spanned()
+        .map(|(t, s)| Token {
+            span: Span::from_logos(s),
+            kind: t,
+        })
         .collect()
 }
-
-
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Token<'a> {
@@ -18,9 +19,7 @@ pub struct Token<'a> {
     pub kind: TokenKind<'a>,
 }
 
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[derive(Logos)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Logos)]
 pub enum TokenKind<'a> {
     #[token(":")]
     Colon,
@@ -34,9 +33,36 @@ pub enum TokenKind<'a> {
     #[token("]")]
     CloseBracket,
 
+    #[token("{")]
+    OpenCurly,
+
+    #[token("}")]
+    CloseCurly,
+
+    #[token("$")]
+    Dollar,
+
+    #[token("+")]
+    Plus,
+
+    #[token("-")]
+    Minus,
+
+    #[token("nop")]
+    Nop,
+
     #[token("jmp")]
     Jump,
 
+    #[token("jmpif")]
+    JumpIf,
+
+    #[token("call")]
+    Call,
+
+    #[token("lea")]
+    Lea,
+    
     #[token("load")]
     Load,
 
@@ -45,9 +71,12 @@ pub enum TokenKind<'a> {
 
     #[token("add")]
     Add,
+
     #[token("mov")]
     Mov,
 
+    #[token("cmpnb")]
+    CompareNotBelow,
 
     #[token("byte")]
     Byte,
@@ -64,9 +93,17 @@ pub enum TokenKind<'a> {
     #[token("equ")]
     Equ,
 
+    #[token("db")]
+    DefineBytes,
+
+    #[token("rflags")]
+    Flags,
 
     #[regex(r"r[0-9]?[0-9]|rip")]
     Register(&'a str),
+
+    #[regex("\"(?:\\.|[^\"\\\\])*\"")]
+    StringLiteral(&'a str),
 
     #[regex(r"[_a-zA-Z][0-9a-zA-Z_]*")]
     Identifier(&'a str),
@@ -76,7 +113,6 @@ pub enum TokenKind<'a> {
 
     #[regex(r"-?0[xX][0-9a-fA-F]+")]
     Hex(&'a str),
-
 
     #[regex(r"\n")]
     Newline,

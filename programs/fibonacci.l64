@@ -1,10 +1,20 @@
 memory_start equ 0x10000
 
 start:
-    mov r1, 0
-    mov r2, 1
-loop:
-    add r3, r1, r2
-    store r3, word [memory_start]
-    mov r1, r2, r2, r3
-    jmp loop
+    call say_hello, r14
+    jmp start
+
+say_hello:
+    mov r2, 0
+header:
+    cmpnb r0, r2, length, rflags
+    jmpif end, rflags
+    load r3, byte [r2 + message]
+    store r3, byte [memory_start]
+    add r2, r2, 1
+    jmp header
+end:
+    jmp r14
+
+message db "Hello World!", 10
+length equ { $ - message }
