@@ -2,7 +2,8 @@ memory_start equ 0x10000
 
 start:
     call say_hello, r14
-    jmp start
+halt:
+    jmp halt
 
 say_hello:
     mov r2, 0
